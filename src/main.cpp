@@ -5,6 +5,7 @@
 
 #include "Grove_Temperature_And_Humidity_Sensor.h"
 #include "TemperatureHumidityValidatorRK.h"
+#include "MQTT-TLS.h"  // MQTT Library
 
 SYSTEM_THREAD(ENABLED);
 SYSTEM_MODE(SEMI_AUTOMATIC);
@@ -13,6 +14,24 @@ SYSTEM_MODE(SEMI_AUTOMATIC);
 PRODUCT_ID(TRACKER_PRODUCT_ID);
 #endif
 PRODUCT_VERSION(TRACKER_PRODUCT_VERSION);
+
+// MQTT Broker Details
+const char* mqttServer = "broker.hivemq.com"; // Public MQTT broker
+const int mqttPort = 1883; // Default MQTT port
+
+// MQTT Client
+MQTT mqttClient(mqttServer, mqttPort, callback); // MQTT client instance
+
+// Callback function to handle incoming messages (if needed)
+void callback(char* topic, byte* payload, unsigned int length) {
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("]: ");
+    for (unsigned int i = 0; i < length; i++) {
+        Serial.print((char)payload[i]);
+    }
+    Serial.println();
+}
 
 SerialLogHandler logHandler(115200, LOG_LEVEL_TRACE, {
     { "app.gps.nmea", LOG_LEVEL_INFO },
@@ -76,6 +95,15 @@ void setup()
     tempSensor.begin();
 
     Particle.connect();
+    waitUntil(Particle.connected);
+
+    // Connect to MQTT Broker
+    if (mqttClient.connect("ParticleTracker")) {
+        Serial.println("Connected to MQTT Broker!");
+    } else {
+        Serial.println("Failed to connect to MQTT Broker!");
+    }
+
 }
 
 void loop()
@@ -88,6 +116,24 @@ void loop()
         validator.addSample(tempSensor.getTempCelcius(), tempSensor.getHumidity());
 
         // Log.info("tempC=%f tempF=%f humidity=%f", validator.getTemperatureC(), validator.getTemperatureF(), validator.getHumidity());
+
+        float tempC = validator.getTemperatureC();
+        float tempAnalog = readAnalogTemperature();
+        float combinedTemp = getCombinedTemperature();
+        float hum = validator.getHumidity();
+
+        // Create MQTT JSON payload
+        char payload[150];
+        snprintf(payload, sizeof(payload), 
+            "{\"temp_dht\": %.2f, \"temp_analog\": %.2f, \"temp_combined\": %.2f, \"humidity\": %.1f}", 
+            tempC, tempAnalog, combinedTemp, hum);
+
+        // Publish data to MQTT topic
+        mqttClient.publish("tracker/temperature", payload);
+        Serial.println("Data Published: " + String(payload));
+
+        // Maintain MQTT connection
+        mqttClient.loop();
     }
 }
 
